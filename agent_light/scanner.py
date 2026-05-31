@@ -136,6 +136,12 @@ class AgentScanner:
         process_by_pid: dict[int, ProcessInfo],
     ) -> list[AgentSessionCandidate]:
         matched_pids = {match.process.pid for match in matches}
+        if definition.agent_id == "codex_desktop":
+            desktop_sessions = self._codex_desktop_project_sessions(definition, matches)
+            if desktop_sessions:
+                return desktop_sessions
+            return [self._single_application_session(definition, matches)]
+
         if definition.agent_id in APPLICATION_AGENT_IDS:
             return [self._single_application_session(definition, matches)]
 
@@ -170,6 +176,9 @@ class AgentScanner:
                     processes=tuple(match.process for match in group_matches),
                     matched_by=matched_by,
                     confidence=confidence,
+                    project_root=_common_project_root(
+                        match.process for match in group_matches
+                    ),
                 )
             )
 
@@ -212,7 +221,53 @@ class AgentScanner:
                 sorted({reason for match in matches for reason in match.reasons})
             ),
             confidence=min(100, sum(match.score for match in matches[:3])),
+            project_root=_project_root_from_process(root_match.process),
         )
+
+    def _codex_desktop_project_sessions(
+        self,
+        definition: AgentDefinition,
+        matches: Sequence[ProcessMatch],
+    ) -> list[AgentSessionCandidate]:
+        roots = [
+            match
+            for match in matches
+            if _is_codex_app_server(match.process)
+            and _project_root_from_process(match.process) is not None
+        ]
+        if not roots:
+            return []
+
+        sessions: list[AgentSessionCandidate] = []
+        for root_match in sorted(
+            roots,
+            key=lambda match: (-(match.process.create_time or 0), match.process.pid),
+        ):
+            project_root = _project_root_from_process(root_match.process)
+            group_matches = [
+                match
+                for match in matches
+                if _project_root_from_process(match.process) == project_root
+            ]
+            if root_match not in group_matches:
+                group_matches.insert(0, root_match)
+            confidence = min(100, sum(match.score for match in group_matches[:3]))
+            matched_by = tuple(
+                sorted({reason for match in group_matches for reason in match.reasons})
+            )
+            sessions.append(
+                AgentSessionCandidate(
+                    session_id=f"{definition.agent_id}:{root_match.process.pid}",
+                    definition=definition,
+                    root_pid=root_match.process.pid,
+                    processes=tuple(match.process for match in group_matches),
+                    matched_by=matched_by,
+                    confidence=confidence,
+                    project_root=project_root,
+                )
+            )
+
+        return sessions
 
     def _session_root_pid(
         self,
@@ -233,3 +288,32 @@ class AgentScanner:
             root_pid = process.ppid
 
         return root_pid
+
+
+def _is_codex_app_server(process: ProcessInfo) -> bool:
+    command = _normalize(process.command_text)
+    return "app-server" in command and "codex" in _normalize(process.name)
+
+
+def _project_root_from_process(process: ProcessInfo) -> str | None:
+    cwd = process.cwd
+    if cwd and cwd not in {"/", "\\"}:
+        return cwd
+    parts = process.cmdline
+    for index, part in enumerate(parts):
+        if part == "--working-dir" and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith("--working-dir="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def _common_project_root(processes: Iterable[ProcessInfo]) -> str | None:
+    roots = {
+        root
+        for process in processes
+        if (root := _project_root_from_process(process)) is not None
+    }
+    if len(roots) == 1:
+        return next(iter(roots))
+    return None

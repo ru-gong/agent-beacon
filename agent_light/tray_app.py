@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import os
+import platform
+import subprocess
+import textwrap
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .controller import AgentController
+from .dialogs import ask_hook_install_confirmation
+from .hook_install import HookInstallPlan
 from .models import AgentCandidate, AgentSessionCandidate, AgentStatus, STATUS_LABELS, StatusEvent
 
 
@@ -32,6 +39,8 @@ LIGHT_LEGEND: tuple[str, ...] = (
 class TrayApp:
     controller: AgentController
     title: str = "Agent Beacon"
+    initial_agent_id: str | None = None
+    initial_session_id: str | None = None
 
     _icon: object | None = field(default=None, init=False)
     _status: AgentStatus = field(default=AgentStatus.UNCONNECTED, init=False)
@@ -52,6 +61,7 @@ class TrayApp:
             ) from exc
 
         self.controller.subscribe(self._on_status)
+        self.controller.hook_consent_callback = self._confirm_hook_install
         menu = Menu(lambda: tuple(self._build_menu_items()))
         icon = pystray.Icon(
             "agent-traffic-light",
@@ -64,10 +74,28 @@ class TrayApp:
 
     def _setup(self, icon: object) -> None:
         self.refresh_candidates()
-        sessions = self._all_sessions()
-        if len(sessions) == 1:
-            self.controller.connect_session(sessions[0])
+        if not self._connect_initial_selection():
+            sessions = self._all_sessions()
+            if len(sessions) == 1:
+                self.controller.connect_session(sessions[0])
         icon.visible = True
+
+    def _connect_initial_selection(self) -> bool:
+        try:
+            if self.initial_session_id:
+                self.controller.connect_session_id(self.initial_session_id)
+                return True
+            if self.initial_agent_id:
+                self.controller.connect(self.initial_agent_id)
+                return True
+        except ValueError as exc:
+            self.controller.logger.record(
+                "initial_connect_failed",
+                agent_id=self.initial_agent_id,
+                session_id=self.initial_session_id,
+                error=str(exc),
+            )
+        return False
 
     def refresh_candidates(self) -> None:
         with self._lock:
@@ -95,6 +123,9 @@ class TrayApp:
             active_session_label = self.controller.active_session_label
             status = self._status
             message = self._message
+            monitor_id = self.controller.active_monitor_id
+            hook_registration_count = self.controller.hook_registration_count
+            runtime_log_path = self.controller.runtime_log_path
 
         def connect_action(session: AgentSessionCandidate):
             def _connect(icon, item):
@@ -137,10 +168,29 @@ class TrayApp:
             lambda icon, item: None,
             enabled=False,
         )
+        if monitor_id:
+            yield MenuItem(
+                f"监听 ID: {monitor_id}",
+                lambda icon, item: None,
+                enabled=False,
+            )
         yield MenuItem(message, lambda icon, item: None, enabled=False)
         yield pystray.Menu.SEPARATOR
         for legend_item in LIGHT_LEGEND:
             yield MenuItem(legend_item, lambda icon, item: None, enabled=False)
+        yield pystray.Menu.SEPARATOR
+        yield MenuItem(
+            f"Hook 登记: {hook_registration_count} 条",
+            lambda icon, item: None,
+            enabled=False,
+        )
+        yield MenuItem("一键取消所有监听 Hook", self._cancel_all_hooks)
+        yield MenuItem(
+            f"日志: {Path(runtime_log_path).name}",
+            lambda icon, item: None,
+            enabled=False,
+        )
+        yield MenuItem("打开日志目录", self._open_log_dir)
         yield pystray.Menu.SEPARATOR
         yield MenuItem("检测到的程序与 Session", Menu(*detected_items))
         yield MenuItem("重新扫描", lambda icon, item: self.refresh_candidates())
@@ -156,6 +206,63 @@ class TrayApp:
         self._stop_blinking()
         self.controller.stop()
         icon.stop()
+
+    def _cancel_all_hooks(self, icon, item) -> None:
+        self.controller.cancel_all_hook_listeners()
+        self.refresh_candidates()
+        self._stop_blinking()
+        self._update_icon()
+
+    def _open_log_dir(self, icon, item) -> None:
+        path = Path(self.controller.runtime_log_path).parent
+        try:
+            system = platform.system().lower()
+            if system == "windows":
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif system == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except OSError:
+            return
+
+    def _confirm_hook_install(self, plan: HookInstallPlan) -> bool:
+        files = "\n".join(f"- {path}" for path in plan.files)
+        commands = "\n".join(f"- {command}" for command in plan.commands)
+        body = textwrap.dedent(
+            f"""
+            Agent 灯塔需要为当前 Session 写入 Agent Hook，才能准确识别执行中、等待授权、已完成和异常状态。
+
+            将写入或修改的文件：
+            {files}
+
+            将登记的 Hook 命令：
+            {commands}
+
+            这些内容会被标记为 Agent Beacon 管理项；之后可以在右键菜单中一键取消所有监听 Hook。
+            """
+        ).strip()
+
+        self.controller.logger.record(
+            "hook_consent_dialog_requested",
+            agent_id=plan.agent_id,
+            session_id=plan.session_id,
+            monitor_id=plan.monitor_id,
+            project_root=plan.project_root,
+            files=plan.files,
+        )
+        allowed = ask_hook_install_confirmation(
+            title="允许 Agent 灯塔写入 Agent Hook 配置吗？",
+            body=body,
+        )
+        self.controller.logger.record(
+            "hook_consent_dialog_result",
+            agent_id=plan.agent_id,
+            session_id=plan.session_id,
+            monitor_id=plan.monitor_id,
+            allowed=allowed,
+        )
+        return allowed
 
     def _all_sessions(self) -> tuple[AgentSessionCandidate, ...]:
         with self._lock:

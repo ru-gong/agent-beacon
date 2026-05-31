@@ -39,11 +39,15 @@ jobs:
 
       - name: Build app bundle
         run: |
+          iconutil -c icns assets/agent-beacon.iconset -o assets/agent-beacon.icns
           pyinstaller \
             --name "Agent Beacon" \
             --windowed \
             --clean \
             --noconfirm \
+            --icon assets/agent-beacon.icns \
+            --add-data "assets/agent-beacon-icon-1024.png:assets" \
+            --add-data "assets/agent-beacon-icon.png:assets" \
             --collect-submodules pystray \
             --collect-submodules PIL \
             packaging/agent_beacon_launcher.py
@@ -102,6 +106,8 @@ jobs:
             --clean `
             --noconfirm `
             --icon assets/agent-beacon.ico `
+            --add-data "assets/agent-beacon-icon-1024.png;assets" `
+            --add-data "assets/agent-beacon-icon.png;assets" `
             --collect-submodules pystray `
             --collect-submodules PIL `
             packaging/agent_beacon_launcher.py

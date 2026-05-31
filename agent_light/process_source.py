@@ -30,6 +30,7 @@ class PsutilProcessSource:
             "ppid",
             "name",
             "cmdline",
+            "cwd",
             "status",
             "cpu_percent",
             "create_time",
@@ -50,6 +51,7 @@ class PsutilProcessSource:
                                 else None
                             ),
                             cmdline=cmdline,
+                            cwd=str(info.get("cwd") or "") or None,
                             status=str(info.get("status") or "") or None,
                             cpu_percent=(
                                 float(info["cpu_percent"])
@@ -121,7 +123,7 @@ class SubprocessProcessSource:
             return []
         script = (
             "Get-CimInstance Win32_Process | "
-            "Select-Object ProcessId,ParentProcessId,Name,CommandLine | "
+            "Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath | "
             "ConvertTo-Csv -NoTypeInformation"
         )
         try:

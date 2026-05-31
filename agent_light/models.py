@@ -33,6 +33,7 @@ class ProcessInfo:
     name: str
     ppid: int | None = None
     cmdline: tuple[str, ...] = ()
+    cwd: str | None = None
     status: str | None = None
     cpu_percent: float | None = None
     create_time: float | None = None
@@ -71,6 +72,7 @@ class AgentSessionCandidate:
     processes: tuple[ProcessInfo, ...]
     matched_by: tuple[str, ...]
     confidence: int
+    project_root: str | None = None
 
     @property
     def agent_id(self) -> str:
@@ -95,7 +97,8 @@ class AgentSessionCandidate:
     def menu_label(self) -> str:
         process_count = len(self.processes)
         suffix = f"{process_count} processes" if process_count > 1 else "1 process"
-        return f"Session {self.root_pid} · {suffix} · {self.root_process.short_command}"
+        project = f" · {self.project_root}" if self.project_root else ""
+        return f"Session {self.root_pid}{project} · {suffix} · {self.root_process.short_command}"
 
 
 @dataclass(frozen=True)
@@ -135,3 +138,7 @@ class StatusEvent:
     session_label: str | None = None
     milestone: bool = False
     timestamp: float = field(default_factory=time)
+    monitor_id: str | None = None
+    hook_session_id: str | None = None
+    hook_event_name: str | None = None
+    source: str | None = None

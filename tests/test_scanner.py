@@ -58,6 +58,51 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(candidates[0].session_count, 1)
         self.assertEqual(candidates[0].sessions[0].pids, (101, 102))
 
+    def test_splits_codex_desktop_app_server_processes_into_project_sessions(self):
+        scanner = AgentScanner(
+            process_source=FakeProcessSource(
+                [
+                    ProcessInfo(
+                        pid=101,
+                        name="Codex",
+                        cmdline=("/Applications/Codex.app/Contents/MacOS/Codex",),
+                        cwd="/",
+                    ),
+                    ProcessInfo(
+                        pid=201,
+                        name="codex",
+                        cmdline=(
+                            "/Applications/Codex.app/Contents/Resources/codex",
+                            "app-server",
+                            "--listen",
+                            "stdio://",
+                        ),
+                        cwd="/repo/one",
+                    ),
+                    ProcessInfo(
+                        pid=202,
+                        name="codex",
+                        cmdline=(
+                            "/Applications/Codex.app/Contents/Resources/codex",
+                            "app-server",
+                            "--listen",
+                            "stdio://",
+                        ),
+                        cwd="/repo/two",
+                    ),
+                ]
+            )
+        )
+
+        candidates = scanner.scan()
+
+        self.assertEqual(candidates[0].agent_id, "codex_desktop")
+        self.assertEqual(candidates[0].session_count, 2)
+        self.assertEqual(
+            [session.project_root for session in candidates[0].sessions],
+            ["/repo/one", "/repo/two"],
+        )
+
     def test_detects_codex_cli_launched_by_npx(self):
         scanner = AgentScanner(
             process_source=FakeProcessSource(

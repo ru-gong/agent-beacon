@@ -6,6 +6,7 @@ import sys
 import time
 
 from .controller import AgentController, known_agent_ids
+from .hook_events import parse_hook_stdin, write_hook_event_status
 from .models import StatusEvent
 from .tray_app import TrayApp
 
@@ -25,13 +26,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run listener without tray UI and print status changes.",
     )
     parser.add_argument(
+        "--hook-event",
+        action="store_true",
+        help="Read one Agent hook JSON event from stdin and update Agent Beacon status.",
+    )
+    parser.add_argument(
         "--agent",
         choices=known_agent_ids(),
-        help="Agent id to connect in headless mode. Requires --session if multiple sessions are running.",
+        help="Agent id to connect at startup, or source agent for --hook-event.",
     )
     parser.add_argument(
         "--session",
-        help="Session id to connect in headless mode, such as codex_cli:12345.",
+        help="Session id to connect at startup, such as codex_cli:12345.",
     )
     parser.add_argument(
         "--poll-interval",
@@ -39,11 +45,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.25,
         help="Polling interval in seconds. Default: 0.25.",
     )
+    parser.add_argument(
+        "--provider",
+        help="Hook provider label, such as claude, codex-cli, or codex-desktop.",
+    )
+    parser.add_argument(
+        "--monitor-id",
+        help="Agent Beacon monitor id that this hook event belongs to.",
+    )
+    parser.add_argument(
+        "--session-root-pid",
+        type=int,
+        help="Root process id of the selected session, used to avoid cross-session events.",
+    )
+    parser.add_argument(
+        "--event-name",
+        help="Override hook event name when the provider payload does not include one.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.hook_event:
+        return _handle_hook_event(args)
+
     controller = AgentController.build_default()
     controller.poll_interval_seconds = args.poll_interval
 
@@ -62,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
                                 {
                                     "session_id": session.session_id,
                                     "root_pid": session.root_pid,
+                                    "project_root": session.project_root,
                                     "label": session.menu_label,
                                     "pids": session.pids,
                                     "confidence": session.confidence,
@@ -89,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
                     pids = ", ".join(str(pid) for pid in session.pids)
                     print(
                         f"  - {session.session_id} root={session.root_pid} "
-                        f"pids=[{pids}] {session.menu_label}"
+                        f"project={session.project_root or '-'} pids=[{pids}] {session.menu_label}"
                     )
         return 0
 
@@ -100,7 +128,31 @@ def main(argv: list[str] | None = None) -> int:
             selected_session_id=args.session,
         )
 
-    TrayApp(controller).run()
+    TrayApp(
+        controller,
+        initial_agent_id=args.agent,
+        initial_session_id=args.session,
+    ).run()
+    return 0
+
+
+def _handle_hook_event(args: argparse.Namespace) -> int:
+    if not args.agent:
+        print("--hook-event requires --agent", file=sys.stderr)
+        return 2
+    try:
+        payload = parse_hook_stdin(sys.stdin.read())
+        write_hook_event_status(
+            agent_id=args.agent,
+            payload=payload,
+            provider=args.provider,
+            monitor_id=args.monitor_id,
+            session_root_pid=args.session_root_pid,
+            event_name=args.event_name,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Failed to record hook event: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -141,6 +193,10 @@ def _run_headless(
                     "message": event.message,
                     "milestone": event.milestone,
                     "timestamp": event.timestamp,
+                    "monitor_id": event.monitor_id,
+                    "hook_session_id": event.hook_session_id,
+                    "hook_event_name": event.hook_event_name,
+                    "source": event.source,
                 },
                 ensure_ascii=False,
             ),
