@@ -12,6 +12,7 @@ from .controller import AgentController
 from .dialogs import ask_hook_install_confirmation
 from .hook_install import HookInstallPlan
 from .models import AgentCandidate, AgentSessionCandidate, AgentStatus, STATUS_LABELS, StatusEvent
+from .runtime_log import log_paths_summary
 
 
 STATUS_COLORS: dict[AgentStatus, tuple[int, int, int, int]] = {
@@ -248,8 +249,8 @@ class TrayApp:
             agent_id=plan.agent_id,
             session_id=plan.session_id,
             monitor_id=plan.monitor_id,
-            project_root=plan.project_root,
-            files=plan.files,
+            has_project_root=bool(plan.project_root),
+            files=log_paths_summary(list(plan.files)),
         )
         allowed = ask_hook_install_confirmation(
             title="允许 Agent 灯塔写入 Agent Hook 配置吗？",

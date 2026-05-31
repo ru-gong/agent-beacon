@@ -10,7 +10,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .paths import ensure_app_state_dir
-from .runtime_log import RuntimeLogger, get_runtime_logger
+from .runtime_log import RuntimeLogger, get_runtime_logger, log_file_basename
 
 
 AGENT_BEACON_MARKER = "agent-beacon-managed"
@@ -73,8 +73,8 @@ class HookRegistry:
             agent_id=registration.agent_id,
             session_id=registration.session_id,
             monitor_id=registration.monitor_id,
-            project_root=registration.project_root,
-            files=registration.files,
+            has_project_root=bool(registration.project_root),
+            files=_file_records_log_payload(registration.files),
             note=registration.note,
         )
 
@@ -106,7 +106,13 @@ class HookRegistry:
             skipped_files=skipped_files,
             messages=tuple(messages),
         )
-        self.logger.record("hook_cleanup_all", result=cleanup_result)
+        self.logger.record(
+            "hook_cleanup_all",
+            registrations=cleanup_result.registrations,
+            touched_files=cleanup_result.touched_files,
+            removed_files=cleanup_result.removed_files,
+            skipped_files=cleanup_result.skipped_files,
+        )
         return cleanup_result
 
     def _cleanup_file(self, file_record: HookFileRecord) -> str:
@@ -195,6 +201,17 @@ def _registration_to_json(registration: HookRegistration) -> dict[str, Any]:
             for file_record in registration.files
         ],
     }
+
+
+def _file_records_log_payload(files: tuple[HookFileRecord, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "file": log_file_basename(file_record.path),
+            "created_by_agent_beacon": file_record.created_by_agent_beacon,
+            "cleanup_strategy": file_record.cleanup_strategy,
+        }
+        for file_record in files
+    ]
 
 
 def _files_from_registration(registration: dict[str, Any]) -> tuple[HookFileRecord, ...]:

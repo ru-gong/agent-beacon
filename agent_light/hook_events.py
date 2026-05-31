@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 from .models import AgentStatus, StatusEvent
 from .paths import ensure_app_state_dir, safe_filename_component
-from .runtime_log import RuntimeLogger, get_runtime_logger
+from .runtime_log import RuntimeLogger, get_runtime_logger, log_file_basename
 
 
 BUSY_EVENTS = frozenset(
@@ -120,7 +120,7 @@ def write_hook_event_status(
         hook_session_id=hook_session_id,
         hook_event_name=hook_event_name,
         mapped_status=status,
-        payload=payload,
+        payload_summary=_payload_summary(payload),
     )
     if status is None:
         return HookEventWriteResult(
@@ -168,7 +168,7 @@ def write_hook_event_status(
         monitor_id=monitor_id,
         hook_event_name=hook_event_name,
         status=status,
-        status_path=status_path,
+        status_file=log_file_basename(status_path),
     )
     return HookEventWriteResult(
         wrote_status=True,
@@ -186,6 +186,32 @@ def parse_hook_stdin(text: str) -> Mapping[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Hook stdin must be a JSON object.")
     return payload
+
+
+def _payload_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep runtime logs useful without storing prompt/tool payload contents."""
+
+    redacted_keys = {
+        "content",
+        "input",
+        "message",
+        "messages",
+        "prompt",
+        "transcript_path",
+        "tool_input",
+        "tool_response",
+        "tool_result",
+    }
+    safe_values: dict[str, str] = {}
+    for key in ("hook_event_name", "event", "event_name", "session_id", "tool_name"):
+        value = payload.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            safe_values[key] = str(value)
+    return {
+        "keys": sorted(str(key) for key in payload.keys()),
+        "safe_values": safe_values,
+        "redacted_keys": sorted(str(key) for key in payload.keys() if str(key) in redacted_keys),
+    }
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -213,8 +239,6 @@ def _message_for_status(
     status: AgentStatus,
     payload: Mapping[str, Any],
 ) -> str:
-    if isinstance(payload.get("message"), str) and payload["message"].strip():
-        return payload["message"].strip()
     display_agent = {
         "codex_cli": "Codex CLI",
         "codex_desktop": "Codex Desktop",

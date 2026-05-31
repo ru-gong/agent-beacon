@@ -162,6 +162,33 @@ class HookRegistryTests(unittest.TestCase):
         self.assertNotIn("UserPromptSubmit", payload["hooks"])
         self.assertEqual(payload["hooks"]["Stop"][0]["hooks"][0]["command"], "echo keep-me")
 
+    def test_runtime_log_summarizes_hook_registration_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "ProjectNightjar"
+            settings_path = project_root / ".claude" / "settings.local.json"
+            registry = HookRegistry(
+                manifest_path=Path(tmpdir) / "manifest.json",
+                logger=RuntimeLogger(log_dir=Path(tmpdir) / "logs", runtime_id="test"),
+            )
+
+            registry.register(
+                HookRegistration(
+                    agent_id="cloud_code_cli",
+                    project_root=str(project_root),
+                    files=(
+                        HookFileRecord(
+                            path=str(settings_path),
+                            cleanup_strategy="json_managed_entries",
+                        ),
+                    ),
+                )
+            )
+            log_text = registry.logger.log_path.read_text(encoding="utf-8")
+
+        self.assertNotIn("ProjectNightjar", log_text)
+        self.assertNotIn(str(project_root), log_text)
+        self.assertIn("settings.local.json", log_text)
+
 
 if __name__ == "__main__":
     unittest.main()

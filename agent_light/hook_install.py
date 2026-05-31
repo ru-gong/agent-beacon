@@ -16,7 +16,7 @@ from .hook_registry import (
     HookRegistry,
 )
 from .models import AgentSessionCandidate
-from .runtime_log import RuntimeLogger, get_runtime_logger
+from .runtime_log import RuntimeLogger, get_runtime_logger, log_file_basename
 
 
 CODEX_HOOK_EVENTS = (
@@ -183,14 +183,18 @@ class HookInstaller:
             agent_id=plan.agent_id,
             session_id=plan.session_id,
             monitor_id=plan.monitor_id,
-            project_root=plan.project_root,
-            hook_path=hook_path,
-            wrapper_path=plan.wrapper_path,
+            has_project_root=bool(plan.project_root),
+            hook_file=log_file_basename(hook_path),
+            wrapper_file=(
+                log_file_basename(plan.wrapper_path)
+                if plan.wrapper_path is not None
+                else None
+            ),
         )
         return HookInstallResult(
             installed=True,
             registration=registration,
-            message=f"已写入 {hook_path}",
+            message=f"已写入 {log_file_basename(hook_path)}",
         )
 
 
@@ -324,12 +328,12 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{path} is not valid JSON") from exc
+        raise ValueError(f"{log_file_basename(path)} is not valid JSON") from exc
     if not isinstance(payload, dict):
-        raise ValueError(f"{path} must contain a JSON object")
+        raise ValueError(f"{log_file_basename(path)} must contain a JSON object")
     hooks = payload.setdefault("hooks", {})
     if not isinstance(hooks, dict):
-        raise ValueError(f"{path} field 'hooks' must be an object")
+        raise ValueError(f"{log_file_basename(path)} field 'hooks' must be an object")
     return payload
 
 

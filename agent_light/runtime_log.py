@@ -97,3 +97,7 @@ def log_file_basename(path: Path | str | None) -> str:
     if path is None:
         return "unknown"
     return safe_filename_component(Path(path).name, fallback="log")
+
+
+def log_paths_summary(paths: tuple[Path | str, ...] | list[Path | str]) -> list[str]:
+    return [log_file_basename(path) for path in paths]

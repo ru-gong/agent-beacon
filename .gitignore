@@ -27,3 +27,5 @@ release/
 
 # Local runtime state
 *.log
+.codex/
+.claude/

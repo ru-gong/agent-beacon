@@ -10,7 +10,7 @@ from .hook_registry import HookCleanupResult, HookRegistry
 from .models import AgentCandidate, AgentSessionCandidate, AgentStatus, StatusEvent
 from .notify import NativeNotifier, Notifier
 from .process_source import ProcessSource, build_default_process_source
-from .runtime_log import RuntimeLogger, get_runtime_logger
+from .runtime_log import RuntimeLogger, get_runtime_logger, log_paths_summary
 from .scanner import AgentScanner
 from .status import CompositeStatusProvider, PollingStatusListener, StatusProvider
 
@@ -99,9 +99,9 @@ class AgentController:
                         {
                             "session_id": session.session_id,
                             "root_pid": session.root_pid,
-                            "project_root": session.project_root,
+                            "has_project_root": session.project_root is not None,
                             "pids": session.pids,
-                            "label": session.menu_label,
+                            "process_count": len(session.processes),
                         }
                         for session in candidate.sessions
                     ],
@@ -128,10 +128,10 @@ class AgentController:
             "session_connected",
             agent_id=session.agent_id,
             session_id=session.session_id,
-            session_label=session.menu_label,
-            project_root=session.project_root,
+            session_label=_session_label_log_value(session),
+            has_project_root=session.project_root is not None,
             root_pid=session.root_pid,
-            pids=session.pids,
+            process_count=len(session.processes),
             monitor_id=monitor_id,
         )
         self._listener = PollingStatusListener(
@@ -172,7 +172,7 @@ class AgentController:
             "session_disconnected",
             agent_id=previous_agent_id,
             session_id=previous_session_id,
-            session_label=previous_session_label,
+            had_session_label=previous_session_label is not None,
             monitor_id=previous_monitor_id,
             emitted=emit,
         )
@@ -220,7 +220,10 @@ class AgentController:
         )
         self.logger.record(
             "hook_listeners_cancelled_from_controller",
-            result=result,
+            registrations=result.registrations,
+            touched_files=result.touched_files,
+            removed_files=result.removed_files,
+            skipped_files=result.skipped_files,
             previous_agent_id=previous_agent_id,
             previous_session_id=previous_session_id,
             previous_monitor_id=previous_monitor_id,
@@ -235,7 +238,7 @@ class AgentController:
             logger.record(
                 "status_event",
                 previous_status=previous_status,
-                event=event,
+                event=_status_event_log_payload(event),
             )
         self._publish(event)
 
@@ -269,8 +272,8 @@ class AgentController:
                 agent_id=session.agent_id,
                 session_id=session.session_id,
                 monitor_id=monitor_id,
-                project_root=plan.project_root,
-                files=plan.files,
+                has_project_root=bool(plan.project_root),
+                files=log_paths_summary(list(plan.files)),
             )
             return
         if self._active_monitor_id != monitor_id:
@@ -332,3 +335,22 @@ class AgentController:
 
 def known_agent_ids() -> tuple[str, ...]:
     return tuple(definition.agent_id for definition in AGENT_DEFINITIONS)
+
+
+def _session_label_log_value(session: AgentSessionCandidate) -> str:
+    return f"{session.definition.display_name} session"
+
+
+def _status_event_log_payload(event: StatusEvent) -> dict[str, object]:
+    return {
+        "agent_id": event.agent_id,
+        "status": event.status,
+        "message": event.message,
+        "session_id": event.session_id,
+        "monitor_id": event.monitor_id,
+        "hook_session_id": event.hook_session_id,
+        "hook_event_name": event.hook_event_name,
+        "source": event.source,
+        "milestone": event.milestone,
+        "timestamp": event.timestamp,
+    }

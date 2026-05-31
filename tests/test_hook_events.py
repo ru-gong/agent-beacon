@@ -40,6 +40,44 @@ class HookEventTests(unittest.TestCase):
         self.assertEqual(payload["session_root_pid"], 123)
         self.assertEqual(payload["hook_session_id"], "abc")
 
+    def test_runtime_log_redacts_hook_payload_contents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logger = RuntimeLogger(log_dir=Path(tmpdir) / "logs", runtime_id="test")
+            result = write_hook_event_status(
+                agent_id="codex_cli",
+                payload={
+                    "hook_event_name": "UserPromptSubmit",
+                    "session_id": "abc",
+                    "prompt": "private roadmap for Project Nightjar",
+                    "message": "private roadmap for Project Nightjar",
+                    "tool_input": {"command": "cat /Users/ada/ProjectNightjar/.env"},
+                    "transcript_path": "/Users/ada/ProjectNightjar/transcript.jsonl",
+                },
+                provider="codex-cli",
+                monitor_id="monitor-1",
+                session_root_pid=123,
+                state_dir=Path(tmpdir),
+                logger=logger,
+            )
+            log_text = logger.log_path.read_text(encoding="utf-8")
+            status_payload = json.loads(result.status_path.read_text(encoding="utf-8"))
+            records = [
+                json.loads(line)
+                for line in log_text.splitlines()
+                if json.loads(line)["event_type"] == "hook_event_received"
+            ]
+
+        self.assertEqual(len(records), 1)
+        summary = records[0]["payload"]["payload_summary"]
+        self.assertIn("prompt", summary["redacted_keys"])
+        self.assertIn("tool_input", summary["redacted_keys"])
+        self.assertIn("transcript_path", summary["redacted_keys"])
+        self.assertNotIn("Project Nightjar", log_text)
+        self.assertNotIn("ProjectNightjar", log_text)
+        self.assertNotIn("/Users/ada", log_text)
+        self.assertNotIn("Project Nightjar", json.dumps(status_payload, ensure_ascii=False))
+        self.assertNotIn("ProjectNightjar", json.dumps(status_payload, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     unittest.main()
