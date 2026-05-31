@@ -13,7 +13,7 @@ from .tray_app import TrayApp
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-light",
-        description="Cross-platform tray traffic-light status indicator for AI agents.",
+        description="Agent Beacon: cross-platform tray status indicator for AI agents.",
     )
     parser.add_argument("--scan", action="store_true", help="Scan once and print agents.")
     parser.add_argument(

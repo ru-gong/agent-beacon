@@ -14,7 +14,7 @@ class Notifier(Protocol):
 
 @dataclass
 class NativeNotifier:
-    app_id: str = "Agent Traffic Light"
+    app_id: str = "Agent Beacon"
     timeout_seconds: float = 2.0
 
     def notify(self, title: str, body: str) -> None:

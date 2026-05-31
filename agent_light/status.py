@@ -9,6 +9,7 @@ from time import time
 from typing import Callable, Protocol, Sequence
 
 from .models import AgentDefinition, AgentStatus, ProcessInfo, StatusEvent
+from .paths import expand_path_patterns
 from .process_source import ProcessSource
 from .scanner import AgentMatcher
 
@@ -61,8 +62,8 @@ class JsonStatusFileProvider:
         self, definition: AgentDefinition, processes: Sequence[ProcessInfo]
     ) -> StatusEvent | None:
         newest: tuple[float, Path] | None = None
-        for pattern in definition.status_file_globs:
-            for filename in glob(str(Path(pattern).expanduser())):
+        for pattern in expand_path_patterns(definition.status_file_globs):
+            for filename in glob(pattern):
                 path = Path(filename)
                 try:
                     mtime = path.stat().st_mtime

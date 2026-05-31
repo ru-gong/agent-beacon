@@ -31,7 +31,7 @@ LIGHT_LEGEND: tuple[str, ...] = (
 @dataclass
 class TrayApp:
     controller: AgentController
-    title: str = "Agent Traffic Light"
+    title: str = "Agent Beacon"
 
     _icon: object | None = field(default=None, init=False)
     _status: AgentStatus = field(default=AgentStatus.UNCONNECTED, init=False)

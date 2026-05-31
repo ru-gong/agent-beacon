@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-traffic-light"
+name = "agent-beacon"
 version = "0.1.0"
-description = "Cross-platform tray traffic-light status indicator for local AI agents."
+description = "Cross-platform tray status beacon for local AI agents."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -4,7 +4,7 @@
 
 程序图标资源位于 `assets/`：
 
-- `agent-beacon-icon.png`：1024 级主图标源文件
+- `agent-beacon-icon.png`：原始生成图标源文件
 - `agent-beacon-icon-1024.png`：标准 1024x1024 PNG
 - `agent-beacon.ico`：Windows 图标
 - `agent-beacon.iconset/`：macOS iconset 源目录
@@ -63,10 +63,21 @@ agent_light/
 
 ## 运行
 
+macOS / Linux:
+
 ```bash
 python3 -m pip install -r requirements.txt
 python3 -m agent_light --scan
 python3 -m agent_light
+```
+
+Windows PowerShell:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m agent_light --scan
+.\.venv\Scripts\python.exe -m agent_light
 ```
 
 无 GUI 调试：
@@ -114,6 +125,10 @@ python3 -m agent_light --headless --agent codex_cli --session codex_cli:12345
 - `~/.agent-traffic-light/codex-cli*.json`
 - `~/.agent-traffic-light/cloud-code*.json`
 - `~/.agent-traffic-light/claude-code*.json`
+- macOS app data：`~/Library/Application Support/Agent Beacon/*.json`
+- Linux state data：`$XDG_STATE_HOME/agent-beacon/*.json` 或 `~/.local/state/agent-beacon/*.json`
+- Windows roaming data：`%APPDATA%\Agent Beacon\*.json`
+- Windows local data：`%LOCALAPPDATA%\Agent Beacon\*.json`
 
 没有 sidecar 时，系统使用进程启发式兜底：进程存在且 CPU 高于阈值视为执行中，停止态视为需要交互，否则视为空闲。这能保证轻量与可用，但精确的“等待用户授权”最好由 Agent 或 wrapper 明确发状态。
 
