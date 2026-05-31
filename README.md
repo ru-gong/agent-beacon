@@ -1,6 +1,13 @@
-# Agent Traffic Light
+# Agent 灯塔 / Agent Beacon
 
 跨平台 AI Agent 状态悬浮系统原型：启动后扫描本机运行中的 Agent 和 Session，从菜单栏/系统托盘选择一个 Session 接入，并用红、黄、绿三色表达状态。
+
+程序图标资源位于 `assets/`：
+
+- `agent-beacon-icon.png`：1024 级主图标源文件
+- `agent-beacon-icon-1024.png`：标准 1024x1024 PNG
+- `agent-beacon.ico`：Windows 图标
+- `agent-beacon.iconset/`：macOS iconset 源目录
 
 ## 技术选型
 
