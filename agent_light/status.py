@@ -101,9 +101,14 @@ class JsonStatusFileProvider:
 
 @dataclass
 class HeuristicStatusProvider:
-    """Best-effort fallback when an agent does not expose exact state."""
+    """Conservative fallback when an agent does not expose exact state.
 
-    busy_cpu_percent: float = 1.0
+    CPU activity is intentionally opt-in. Background Agent processes can wake up
+    for indexing, telemetry, IPC, or UI work even when no user task is running,
+    so defaulting CPU activity to BUSY creates false blinking.
+    """
+
+    busy_cpu_percent: float | None = None
     stopped_statuses: frozenset[str] = frozenset({"stopped", "tracing-stop"})
 
     def evaluate(
@@ -126,7 +131,7 @@ class HeuristicStatusProvider:
                 message=f"{definition.display_name} 已暂停，可能需要用户交互",
             )
 
-        if any(
+        if self.busy_cpu_percent is not None and any(
             process.cpu_percent is not None
             and process.cpu_percent >= self.busy_cpu_percent
             for process in processes
@@ -140,7 +145,7 @@ class HeuristicStatusProvider:
         return StatusEvent(
             agent_id=definition.agent_id,
             status=AgentStatus.IDLE,
-            message=f"{definition.display_name} 当前空闲",
+            message=f"{definition.display_name} 当前空闲（未收到明确执行状态）",
         )
 
 
