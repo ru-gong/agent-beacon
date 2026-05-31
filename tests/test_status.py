@@ -1,16 +1,35 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from agent_light.definitions import get_definition
-from agent_light.models import AgentStatus, ProcessInfo
+from agent_light.models import AgentStatus, ProcessInfo, StatusEvent
 from agent_light.status import HeuristicStatusProvider, JsonStatusFileProvider, PollingStatusListener
 
 
 class FakeProcessSource:
     def snapshot(self):
         return []
+
+
+class CountingProcessSource:
+    def __init__(self):
+        self.calls = 0
+
+    def snapshot(self):
+        self.calls += 1
+        return [ProcessInfo(pid=1, name="codex", cmdline=("codex",))]
+
+
+class StaticStatusProvider:
+    def evaluate(self, definition, processes):
+        return StatusEvent(
+            agent_id=definition.agent_id,
+            status=AgentStatus.IDLE,
+            message="stable",
+        )
 
 
 class StatusTests(unittest.TestCase):
@@ -88,6 +107,26 @@ class StatusTests(unittest.TestCase):
         )
 
         self.assertEqual([process.pid for process in filtered], [10, 11])
+
+    def test_listener_throttles_full_process_scans(self):
+        definition = get_definition("codex_cli")
+        source = CountingProcessSource()
+        listener = PollingStatusListener(
+            definition=definition,
+            process_source=source,
+            status_provider=StaticStatusProvider(),
+            callback=lambda event: None,
+            poll_interval_seconds=0.02,
+            process_scan_interval_seconds=10.0,
+        )
+
+        listener.start()
+        try:
+            time.sleep(0.12)
+        finally:
+            listener.stop()
+
+        self.assertEqual(source.calls, 1)
 
 
 if __name__ == "__main__":

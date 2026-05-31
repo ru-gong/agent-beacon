@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
+import subprocess
 import threading
 from dataclasses import dataclass, field, replace
 from glob import glob
 from pathlib import Path
-from time import time
+from time import monotonic, time
 from typing import Callable, Protocol, Sequence
 
 from .models import AgentDefinition, AgentStatus, ProcessInfo, StatusEvent
@@ -176,6 +179,7 @@ class PollingStatusListener:
     status_provider: StatusProvider
     callback: StatusCallback
     poll_interval_seconds: float = 0.25
+    process_scan_interval_seconds: float = 2.0
     session_id: str | None = None
     session_root_pid: int | None = None
     session_label: str | None = None
@@ -202,15 +206,24 @@ class PollingStatusListener:
 
     def _run(self) -> None:
         previous_key: tuple[AgentStatus, str, bool] | None = None
+        processes: list[ProcessInfo] = []
+        process_by_pid: dict[int, ProcessInfo] = {}
+        next_process_scan_at = 0.0
         while not self._stop_event.is_set():
-            snapshot = list(self.process_source.snapshot())
-            process_by_pid = {process.pid: process for process in snapshot}
-            matches = self.matcher.matches_for_definition(self.definition, snapshot)
-            processes = [
-                match.process
-                for match in matches
-            ]
-            processes = self._filter_session_processes(processes, process_by_pid)
+            now = monotonic()
+            if now >= next_process_scan_at:
+                snapshot = list(self.process_source.snapshot())
+                process_by_pid = {process.pid: process for process in snapshot}
+                matches = self.matcher.matches_for_definition(self.definition, snapshot)
+                processes = [match.process for match in matches]
+                processes = self._filter_session_processes(processes, process_by_pid)
+                next_process_scan_at = now + self.process_scan_interval_seconds
+
+            if self.session_root_pid is not None and not _pid_exists(self.session_root_pid):
+                processes = []
+                process_by_pid = {}
+                next_process_scan_at = now + self.process_scan_interval_seconds
+
             if self.session_root_pid is not None and not processes:
                 event = self._with_session(
                     StatusEvent(
@@ -265,3 +278,38 @@ class PollingStatusListener:
             session_id=self.session_id,
             session_label=self.session_label,
         )
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        import psutil
+
+        return bool(psutil.pid_exists(pid))
+    except ImportError:
+        pass
+
+    if platform.system().lower() == "windows":
+        try:
+            result = subprocess.run(
+                [
+                    "tasklist",
+                    "/FI",
+                    f"PID eq {pid}",
+                    "/NH",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True
+        return str(pid) in result.stdout
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
