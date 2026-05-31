@@ -16,7 +16,9 @@ htmlcov/
 # Build artifacts
 build/
 dist/
+release/
 *.egg-info/
+*.spec
 
 # Local editor and OS noise
 .DS_Store

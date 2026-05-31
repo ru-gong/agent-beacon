@@ -25,6 +25,8 @@ Agent 灯塔主要通过两种方式判断状态：
 
 ## 运行
 
+安装包可在 GitHub Releases 下载。
+
 macOS / Linux:
 
 ```bash
