@@ -24,6 +24,9 @@ class StatusProvider(Protocol):
         """Return a status event, or None if this provider has no signal."""
 
 
+CLI_ACTIVITY_AGENT_IDS = frozenset({"codex_cli", "cloud_code_cli"})
+
+
 def status_from_text(value: str) -> AgentStatus | None:
     normalized = value.casefold().replace("-", "_").replace(" ", "_")
     if normalized in {"busy", "running", "working", "executing", "generating"}:
@@ -112,6 +115,8 @@ class HeuristicStatusProvider:
     """
 
     busy_cpu_percent: float | None = None
+    cli_busy_cpu_percent: float | None = 0.5
+    active_cli_statuses: frozenset[str] = frozenset({"running"})
     stopped_statuses: frozenset[str] = frozenset({"stopped", "tracing-stop"})
 
     def evaluate(
@@ -134,11 +139,7 @@ class HeuristicStatusProvider:
                 message=f"{definition.display_name} 已暂停，可能需要用户交互",
             )
 
-        if self.busy_cpu_percent is not None and any(
-            process.cpu_percent is not None
-            and process.cpu_percent >= self.busy_cpu_percent
-            for process in processes
-        ):
+        if self._has_busy_signal(definition, processes):
             return StatusEvent(
                 agent_id=definition.agent_id,
                 status=AgentStatus.BUSY,
@@ -149,6 +150,31 @@ class HeuristicStatusProvider:
             agent_id=definition.agent_id,
             status=AgentStatus.IDLE,
             message=f"{definition.display_name} 当前空闲（未收到明确执行状态）",
+        )
+
+    def _has_busy_signal(
+        self, definition: AgentDefinition, processes: Sequence[ProcessInfo]
+    ) -> bool:
+        if self.busy_cpu_percent is not None and any(
+            process.cpu_percent is not None
+            and process.cpu_percent >= self.busy_cpu_percent
+            for process in processes
+        ):
+            return True
+
+        if definition.agent_id not in CLI_ACTIVITY_AGENT_IDS:
+            return False
+
+        if self.cli_busy_cpu_percent is not None and any(
+            process.cpu_percent is not None
+            and process.cpu_percent >= self.cli_busy_cpu_percent
+            for process in processes
+        ):
+            return True
+
+        return any(
+            (process.status or "").casefold() in self.active_cli_statuses
+            for process in processes
         )
 
 
@@ -187,6 +213,7 @@ class PollingStatusListener:
 
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
+    _metric_processes: dict[int, object] = field(default_factory=dict, init=False)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -223,6 +250,8 @@ class PollingStatusListener:
                 processes = []
                 process_by_pid = {}
                 next_process_scan_at = now + self.process_scan_interval_seconds
+            elif processes:
+                processes = self._refresh_process_metrics(processes)
 
             if self.session_root_pid is not None and not processes:
                 event = self._with_session(
@@ -271,6 +300,41 @@ class PollingStatusListener:
                 return True
             current = process_by_pid.get(current.ppid)
         return False
+
+    def _refresh_process_metrics(
+        self, processes: Sequence[ProcessInfo]
+    ) -> list[ProcessInfo]:
+        try:
+            import psutil
+        except ImportError:
+            return list(processes)
+
+        refreshed: list[ProcessInfo] = []
+        live_pids = {process.pid for process in processes}
+        for pid in tuple(self._metric_processes):
+            if pid not in live_pids:
+                self._metric_processes.pop(pid, None)
+
+        for process in processes:
+            try:
+                metric_process = self._metric_processes.get(process.pid)
+                if metric_process is None:
+                    metric_process = psutil.Process(process.pid)
+                    metric_process.cpu_percent(None)
+                    self._metric_processes[process.pid] = metric_process
+                    cpu_percent = process.cpu_percent
+                else:
+                    cpu_percent = float(metric_process.cpu_percent(None))
+                refreshed.append(
+                    replace(
+                        process,
+                        status=str(metric_process.status() or "") or process.status,
+                        cpu_percent=cpu_percent,
+                    )
+                )
+            except (psutil.Error, OSError, TypeError, ValueError):
+                refreshed.append(process)
+        return refreshed
 
     def _with_session(self, event: StatusEvent) -> StatusEvent:
         return replace(

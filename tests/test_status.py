@@ -49,13 +49,31 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(event.status, AgentStatus.BUSY)
 
     def test_heuristic_defaults_to_idle_despite_cpu_activity(self):
-        definition = get_definition("codex_cli")
+        definition = get_definition("codex_desktop")
         event = HeuristicStatusProvider().evaluate(
             definition,
-            [ProcessInfo(pid=1, name="codex", cpu_percent=4.2)],
+            [ProcessInfo(pid=1, name="Codex", status="running", cpu_percent=4.2)],
         )
 
         self.assertEqual(event.status, AgentStatus.IDLE)
+
+    def test_heuristic_reports_busy_for_cli_cpu_activity(self):
+        definition = get_definition("cloud_code_cli")
+        event = HeuristicStatusProvider().evaluate(
+            definition,
+            [ProcessInfo(pid=1, name="claude", cpu_percent=0.6)],
+        )
+
+        self.assertEqual(event.status, AgentStatus.BUSY)
+
+    def test_heuristic_reports_busy_for_running_cli_process(self):
+        definition = get_definition("cloud_code_cli")
+        event = HeuristicStatusProvider().evaluate(
+            definition,
+            [ProcessInfo(pid=1, name="claude", status="running", cpu_percent=0.0)],
+        )
+
+        self.assertEqual(event.status, AgentStatus.BUSY)
 
     def test_json_status_file_overrides_heuristic_signal(self):
         definition = get_definition("codex_cli")
