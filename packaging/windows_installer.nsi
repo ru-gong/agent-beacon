@@ -21,7 +21,7 @@ UninstPage instfiles
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /oname="${APP_EXE}" "..\dist\Agent Beacon.exe"
+  File "..\dist\Agent Beacon.exe"
 
   CreateDirectory "$SMPROGRAMS\Agent Beacon"
   CreateShortcut "$SMPROGRAMS\Agent Beacon\Agent Beacon.lnk" "$INSTDIR\${APP_EXE}"
