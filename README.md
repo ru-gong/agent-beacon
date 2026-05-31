@@ -1,65 +1,27 @@
 # Agent 灯塔 / Agent Beacon
 
-跨平台 AI Agent 状态悬浮系统原型：启动后扫描本机运行中的 Agent 和 Session，从菜单栏/系统托盘选择一个 Session 接入，并用红、黄、绿三色表达状态。
+Agent 灯塔是一个常驻菜单栏/系统托盘的小工具，用红黄绿状态灯提示本机 AI Agent 的运行状态。
 
-程序图标资源位于 `assets/`：
+它会在启动时扫描本机正在运行的 Agent，例如 Codex Desktop、Codex CLI、Cloud Code CLI，并把检测到的程序和 Session 显示在右键菜单里。用户选择一个 Session 后，Agent 灯塔只监听这个 Session；切换目标时会自动断开旧监听。
 
-- `agent-beacon-icon.png`：原始生成图标源文件
-- `agent-beacon-icon-1024.png`：标准 1024x1024 PNG
-- `agent-beacon.ico`：Windows 图标
-- `agent-beacon.iconset/`：macOS iconset 源目录
+## 状态灯
 
-## 技术选型
+- 绿灯闪烁：Agent 正在执行任务
+- 绿灯常亮：Agent 已完成或当前空闲
+- 黄灯：Agent 需要用户确认、授权或输入
+- 红灯：Agent 报错或异常停止
+- 灰灯：未连接或目标已断开
 
-当前实现采用 **Python + pystray + psutil + 原生通知命令**：
+右键菜单中也会显示这组说明。
 
-- `pystray` 提供 Windows 系统托盘、macOS 菜单栏、Linux 托盘后端；它要求 `Icon.run()` 在主线程运行，macOS 也是这个模型。
-- `psutil` 负责低开销进程扫描，支持 Windows/macOS/Linux，并优先使用 `process_iter()` 避免 PID 枚举竞态。
-- 原生通知直接走系统能力：macOS 使用 `osascript display notification`，Windows 使用 WinRT Toast，Linux 使用 `notify-send`。
-- 核心层不依赖托盘 UI：扫描、Session 聚合、状态监听、控制器、通知全部可测试，后续迁移到 Rust/Tauri 或新增第 4 个 Agent 不需要重写识别逻辑。
+## 怎么工作
 
-Rust/Tauri 也是可行路线：Tauri v2 托盘和通知集成更完整，适合正式产品化安装包；纯 Rust `tray-icon + sysinfo` 更轻，但菜单事件循环、通知、打包要写更多平台胶水。这个仓库先用 Python 落地低成本可运行版本，同时保留清晰的架构边界。
+Agent 灯塔主要通过两种方式判断状态：
 
-## 状态语义
+1. 扫描系统进程，识别正在运行的 Agent 和 Session。
+2. 如果存在状态 JSON 文件，则优先读取它，获得更准确的 `busy`、`idle`、`needs_interaction`、`error` 状态。
 
-- 绿色闪烁：`BUSY`，Agent 正在执行。
-- 绿色常亮：`IDLE`，Agent 已执行完成或当前空闲。
-- 黄色：`NEEDS_INTERACTION`，暂停、等待授权或用户输入。
-- 红色：`ERROR`，报错或异常停止。
-- 灰色：`UNCONNECTED/DISCONNECTED`，未接入或目标进程断开。
-
-右键菜单会直接展示这组灯语说明，方便用户不记颜色语义也能确认当前状态。
-
-## Agent 与 Session
-
-扫描模型分两层：
-
-- `Agent`：程序家族，例如 Codex Desktop、Codex CLI、Cloud Code CLI。
-- `Session`：一次可被用户选择的运行实例，例如某个 Codex CLI 终端进程树、某个 Claude/Cloud Code CLI 进程树。
-
-托盘菜单会按 Agent 分组列出 Session。系统同一时间仍然只监听一个 Session；切换 Session 时会自动停止旧监听器并释放资源。
-
-当前无 hook 模式下的 Session 推断规则：
-
-- CLI 类 Agent：按匹配进程的 root PID 和子进程树聚合，多个终端/多个 CLI 实例会显示为多个 Session。
-- Desktop 类 Agent：Codex Desktop 的 helper 进程会聚合成一个 App Session，避免把 Electron/worker 子进程误当成多个用户会话。
-- 若被选中的 Session root 进程消失，状态会立即转为断开。
-
-## 架构
-
-```text
-agent_light/
-  definitions.py       # Codex Desktop / Codex CLI / Cloud Code CLI 特征定义
-  process_source.py    # psutil 进程快照，带无依赖 subprocess fallback
-  scanner.py           # AgentMatcher + AgentScanner，只负责发现候选程序
-  status.py            # 状态提供者：JSON sidecar 优先，进程启发式兜底
-  controller.py        # 单一接入、切换释放、通知触发、订阅发布
-  tray_app.py          # pystray 菜单栏/系统托盘适配层
-  notify.py            # Windows Toast / macOS Notification Center / Linux notify-send
-  cli.py               # --scan、--headless、托盘启动入口
-```
-
-`definitions.py` 是新增 Agent 的主要入口。第 4 个 Agent 只需要补一个 `AgentDefinition`，如果它有真实 IPC/SSE/WebSocket/本地文件状态源，再新增一个 `StatusProvider` 插到 `CompositeStatusProvider` 前面。
+没有状态 JSON 时，程序会用进程存在性、CPU 活跃度和进程暂停状态做轻量判断。
 
 ## 运行
 
@@ -67,7 +29,6 @@ macOS / Linux:
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m agent_light --scan
 python3 -m agent_light
 ```
 
@@ -76,61 +37,57 @@ Windows PowerShell:
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m agent_light --scan
 .\.venv\Scripts\python.exe -m agent_light
 ```
 
-无 GUI 调试：
+扫描当前 Agent：
 
 ```bash
 python3 -m agent_light --scan --json
+```
+
+Windows 中把 `python3` 换成 `.\.venv\Scripts\python.exe`。
+
+无界面监听某个 Session：
+
+```bash
 python3 -m agent_light --headless --agent codex_cli --session codex_cli:12345
 ```
 
-`--scan --json` 会输出嵌套结构：
+## 状态 JSON
 
-```json
-[
-  {
-    "agent_id": "codex_cli",
-    "display_name": "Codex CLI",
-    "sessions": [
-      {
-        "session_id": "codex_cli:12345",
-        "root_pid": 12345,
-        "label": "Session 12345 · 2 processes · node /opt/homebrew/bin/codex"
-      }
-    ]
-  }
-]
-```
-
-## 精确状态接入
-
-真实 Agent 若能写 sidecar JSON，状态延迟由轮询间隔控制，默认 `0.25s`，满足 500ms 内同步：
+Agent 或外部脚本可以写入状态 JSON，让灯塔更准确地同步状态：
 
 ```json
 {
   "agent_id": "codex_cli",
   "status": "needs_interaction",
   "message": "Codex CLI 正在等待权限审批",
-  "milestone": true,
-  "timestamp": 1790771523.12
+  "milestone": true
 }
 ```
 
-默认路径：
+支持的 `status`：
 
-- `~/.agent-traffic-light/codex-desktop*.json`
-- `~/.agent-traffic-light/codex-cli*.json`
-- `~/.agent-traffic-light/cloud-code*.json`
-- `~/.agent-traffic-light/claude-code*.json`
-- macOS app data：`~/Library/Application Support/Agent Beacon/*.json`
-- Linux state data：`$XDG_STATE_HOME/agent-beacon/*.json` 或 `~/.local/state/agent-beacon/*.json`
-- Windows roaming data：`%APPDATA%\Agent Beacon\*.json`
-- Windows local data：`%LOCALAPPDATA%\Agent Beacon\*.json`
+- `busy`
+- `idle`
+- `needs_interaction`
+- `error`
+- `disconnected`
 
-没有 sidecar 时，系统使用进程启发式兜底：进程存在且 CPU 高于阈值视为执行中，停止态视为需要交互，否则视为空闲。这能保证轻量与可用，但精确的“等待用户授权”最好由 Agent 或 wrapper 明确发状态。
+常用状态文件目录：
+
+- macOS：`~/.agent-traffic-light/` 或 `~/Library/Application Support/Agent Beacon/`
+- Windows：`%APPDATA%\Agent Beacon\` 或 `%LOCALAPPDATA%\Agent Beacon\`
+- Linux：`~/.agent-traffic-light/`、`$XDG_STATE_HOME/agent-beacon/` 或 `~/.local/state/agent-beacon/`
+
+## 资源
+
+图标资源在 `assets/`：
+
+- `agent-beacon-icon-1024.png`
+- `agent-beacon.ico`
+- `agent-beacon.iconset/`
 
 ## 测试
 
