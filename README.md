@@ -94,3 +94,7 @@ Agent 或外部脚本可以写入状态 JSON，让灯塔更准确地同步状态
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+## 许可证
+
+MIT License
