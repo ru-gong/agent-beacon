@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from glob import glob
 from pathlib import Path
-from time import sleep, time
+from time import time
 from typing import Callable, Protocol, Sequence
 
 from .models import AgentDefinition, AgentStatus, ProcessInfo, StatusEvent
@@ -170,6 +170,9 @@ class PollingStatusListener:
     status_provider: StatusProvider
     callback: StatusCallback
     poll_interval_seconds: float = 0.25
+    session_id: str | None = None
+    session_root_pid: int | None = None
+    session_label: str | None = None
     matcher: AgentMatcher = field(default_factory=AgentMatcher)
 
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
@@ -194,16 +197,65 @@ class PollingStatusListener:
     def _run(self) -> None:
         previous_key: tuple[AgentStatus, str, bool] | None = None
         while not self._stop_event.is_set():
+            snapshot = list(self.process_source.snapshot())
+            process_by_pid = {process.pid: process for process in snapshot}
+            matches = self.matcher.matches_for_definition(self.definition, snapshot)
             processes = [
                 match.process
-                for match in self.matcher.matches_for_definition(
-                    self.definition, self.process_source.snapshot()
-                )
+                for match in matches
             ]
-            event = self.status_provider.evaluate(self.definition, processes)
+            processes = self._filter_session_processes(processes, process_by_pid)
+            if self.session_root_pid is not None and not processes:
+                event = self._with_session(
+                    StatusEvent(
+                        agent_id=self.definition.agent_id,
+                        status=AgentStatus.DISCONNECTED,
+                        message=f"{self.definition.display_name} session {self.session_root_pid} 已断开",
+                    )
+                )
+            else:
+                event = self.status_provider.evaluate(self.definition, processes)
+                if event is not None:
+                    event = self._with_session(event)
             if event is not None:
                 key = (event.status, event.message, event.milestone)
                 if key != previous_key:
                     previous_key = key
                     self.callback(event)
             self._stop_event.wait(self.poll_interval_seconds)
+
+    def _filter_session_processes(
+        self,
+        processes: Sequence[ProcessInfo],
+        process_by_pid: dict[int, ProcessInfo],
+    ) -> list[ProcessInfo]:
+        if self.session_root_pid is None:
+            return list(processes)
+        return [
+            process
+            for process in processes
+            if process.pid == self.session_root_pid
+            or self._has_ancestor(process.pid, self.session_root_pid, process_by_pid)
+        ]
+
+    def _has_ancestor(
+        self,
+        pid: int,
+        ancestor_pid: int,
+        process_by_pid: dict[int, ProcessInfo],
+    ) -> bool:
+        seen: set[int] = set()
+        current = process_by_pid.get(pid)
+        while current is not None and current.ppid is not None and current.pid not in seen:
+            seen.add(current.pid)
+            if current.ppid == ancestor_pid:
+                return True
+            current = process_by_pid.get(current.ppid)
+        return False
+
+    def _with_session(self, event: StatusEvent) -> StatusEvent:
+        return replace(
+            event,
+            session_id=self.session_id,
+            session_label=self.session_label,
+        )

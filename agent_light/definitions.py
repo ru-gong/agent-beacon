@@ -77,7 +77,6 @@ AGENT_DEFINITIONS: tuple[AgentDefinition, ...] = (
         process_name_keywords=(
             "cloud-code",
             "cloudcode",
-            "cloud",
             "claude",
             "node",
             "npm",

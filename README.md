@@ -1,6 +1,6 @@
 # Agent Traffic Light
 
-跨平台 AI Agent 状态悬浮系统原型：启动后扫描本机运行中的 Agent，从菜单栏/系统托盘选择接入目标，并用红、黄、绿三色表达状态。
+跨平台 AI Agent 状态悬浮系统原型：启动后扫描本机运行中的 Agent 和 Session，从菜单栏/系统托盘选择一个 Session 接入，并用红、黄、绿三色表达状态。
 
 ## 技术选型
 
@@ -9,7 +9,7 @@
 - `pystray` 提供 Windows 系统托盘、macOS 菜单栏、Linux 托盘后端；它要求 `Icon.run()` 在主线程运行，macOS 也是这个模型。
 - `psutil` 负责低开销进程扫描，支持 Windows/macOS/Linux，并优先使用 `process_iter()` 避免 PID 枚举竞态。
 - 原生通知直接走系统能力：macOS 使用 `osascript display notification`，Windows 使用 WinRT Toast，Linux 使用 `notify-send`。
-- 核心层不依赖托盘 UI：扫描、状态监听、控制器、通知全部可测试，后续迁移到 Rust/Tauri 或新增第 4 个 Agent 不需要重写识别逻辑。
+- 核心层不依赖托盘 UI：扫描、Session 聚合、状态监听、控制器、通知全部可测试，后续迁移到 Rust/Tauri 或新增第 4 个 Agent 不需要重写识别逻辑。
 
 Rust/Tauri 也是可行路线：Tauri v2 托盘和通知集成更完整，适合正式产品化安装包；纯 Rust `tray-icon + sysinfo` 更轻，但菜单事件循环、通知、打包要写更多平台胶水。这个仓库先用 Python 落地低成本可运行版本，同时保留清晰的架构边界。
 
@@ -22,6 +22,21 @@ Rust/Tauri 也是可行路线：Tauri v2 托盘和通知集成更完整，适合
 - 灰色：`UNCONNECTED/DISCONNECTED`，未接入或目标进程断开。
 
 右键菜单会直接展示这组灯语说明，方便用户不记颜色语义也能确认当前状态。
+
+## Agent 与 Session
+
+扫描模型分两层：
+
+- `Agent`：程序家族，例如 Codex Desktop、Codex CLI、Cloud Code CLI。
+- `Session`：一次可被用户选择的运行实例，例如某个 Codex CLI 终端进程树、某个 Claude/Cloud Code CLI 进程树。
+
+托盘菜单会按 Agent 分组列出 Session。系统同一时间仍然只监听一个 Session；切换 Session 时会自动停止旧监听器并释放资源。
+
+当前无 hook 模式下的 Session 推断规则：
+
+- CLI 类 Agent：按匹配进程的 root PID 和子进程树聚合，多个终端/多个 CLI 实例会显示为多个 Session。
+- Desktop 类 Agent：Codex Desktop 的 helper 进程会聚合成一个 App Session，避免把 Electron/worker 子进程误当成多个用户会话。
+- 若被选中的 Session root 进程消失，状态会立即转为断开。
 
 ## 架构
 
@@ -51,7 +66,25 @@ python3 -m agent_light
 
 ```bash
 python3 -m agent_light --scan --json
-python3 -m agent_light --headless --agent codex_cli
+python3 -m agent_light --headless --agent codex_cli --session codex_cli:12345
+```
+
+`--scan --json` 会输出嵌套结构：
+
+```json
+[
+  {
+    "agent_id": "codex_cli",
+    "display_name": "Codex CLI",
+    "sessions": [
+      {
+        "session_id": "codex_cli:12345",
+        "root_pid": 12345,
+        "label": "Session 12345 · 2 processes · node /opt/homebrew/bin/codex"
+      }
+    ]
+  }
+]
 ```
 
 ## 精确状态接入

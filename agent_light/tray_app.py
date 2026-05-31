@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass, field
 
 from .controller import AgentController
-from .models import AgentCandidate, AgentStatus, STATUS_LABELS, StatusEvent
+from .models import AgentCandidate, AgentSessionCandidate, AgentStatus, STATUS_LABELS, StatusEvent
 
 
 STATUS_COLORS: dict[AgentStatus, tuple[int, int, int, int]] = {
@@ -64,8 +64,9 @@ class TrayApp:
 
     def _setup(self, icon: object) -> None:
         self.refresh_candidates()
-        if len(self._candidates) == 1:
-            self.controller.connect(self._candidates[0].agent_id)
+        sessions = self._all_sessions()
+        if len(sessions) == 1:
+            self.controller.connect_session(sessions[0])
         icon.visible = True
 
     def refresh_candidates(self) -> None:
@@ -90,13 +91,14 @@ class TrayApp:
 
         with self._lock:
             candidates = tuple(self._candidates)
-            active_agent_id = self.controller.active_agent_id
+            active_session_id = self.controller.active_session_id
+            active_session_label = self.controller.active_session_label
             status = self._status
             message = self._message
 
-        def connect_action(agent_id: str):
+        def connect_action(session: AgentSessionCandidate):
             def _connect(icon, item):
-                self.controller.connect(agent_id)
+                self.controller.connect_session(session)
                 self.refresh_candidates()
 
             return _connect
@@ -104,11 +106,19 @@ class TrayApp:
         if candidates:
             detected_items = tuple(
                 MenuItem(
-                    f"{candidate.display_name}  PID:{','.join(str(pid) for pid in candidate.pids)}",
-                    connect_action(candidate.agent_id),
-                    checked=lambda item, agent_id=candidate.agent_id: active_agent_id
-                    == agent_id,
-                    radio=True,
+                    f"{candidate.display_name} ({candidate.session_count})",
+                    Menu(
+                        *tuple(
+                            MenuItem(
+                                session.menu_label,
+                                connect_action(session),
+                                checked=lambda item, session_id=session.session_id: active_session_id
+                                == session_id,
+                                radio=True,
+                            )
+                            for session in candidate.sessions
+                        )
+                    ),
                 )
                 for candidate in candidates
             )
@@ -122,12 +132,17 @@ class TrayApp:
             lambda icon, item: None,
             enabled=False,
         )
+        yield MenuItem(
+            f"接入: {active_session_label or '未选择 Session'}",
+            lambda icon, item: None,
+            enabled=False,
+        )
         yield MenuItem(message, lambda icon, item: None, enabled=False)
         yield pystray.Menu.SEPARATOR
         for legend_item in LIGHT_LEGEND:
             yield MenuItem(legend_item, lambda icon, item: None, enabled=False)
         yield pystray.Menu.SEPARATOR
-        yield MenuItem("检测到的程序", Menu(*detected_items))
+        yield MenuItem("检测到的程序与 Session", Menu(*detected_items))
         yield MenuItem("重新扫描", lambda icon, item: self.refresh_candidates())
         yield MenuItem(
             "断开当前接入",
@@ -141,6 +156,14 @@ class TrayApp:
         self._stop_blinking()
         self.controller.stop()
         icon.stop()
+
+    def _all_sessions(self) -> tuple[AgentSessionCandidate, ...]:
+        with self._lock:
+            return tuple(
+                session
+                for candidate in self._candidates
+                for session in candidate.sessions
+            )
 
     def _update_icon(self) -> None:
         icon = self._icon

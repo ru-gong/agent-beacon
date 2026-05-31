@@ -31,6 +31,7 @@ STATUS_LABELS: Mapping[AgentStatus, str] = {
 class ProcessInfo:
     pid: int
     name: str
+    ppid: int | None = None
     cmdline: tuple[str, ...] = ()
     status: str | None = None
     cpu_percent: float | None = None
@@ -39,6 +40,12 @@ class ProcessInfo:
     @property
     def command_text(self) -> str:
         return " ".join(self.cmdline)
+
+    @property
+    def short_command(self) -> str:
+        command = self.command_text or self.name
+        command = " ".join(command.split())
+        return command[:72] + "..." if len(command) > 75 else command
 
 
 @dataclass(frozen=True)
@@ -57,8 +64,10 @@ class AgentDefinition:
 
 
 @dataclass(frozen=True)
-class AgentCandidate:
+class AgentSessionCandidate:
+    session_id: str
     definition: AgentDefinition
+    root_pid: int
     processes: tuple[ProcessInfo, ...]
     matched_by: tuple[str, ...]
     confidence: int
@@ -75,11 +84,54 @@ class AgentCandidate:
     def pids(self) -> tuple[int, ...]:
         return tuple(sorted(process.pid for process in self.processes))
 
+    @property
+    def root_process(self) -> ProcessInfo:
+        for process in self.processes:
+            if process.pid == self.root_pid:
+                return process
+        return self.processes[0]
+
+    @property
+    def menu_label(self) -> str:
+        process_count = len(self.processes)
+        suffix = f"{process_count} processes" if process_count > 1 else "1 process"
+        return f"Session {self.root_pid} · {suffix} · {self.root_process.short_command}"
+
+
+@dataclass(frozen=True)
+class AgentCandidate:
+    definition: AgentDefinition
+    sessions: tuple[AgentSessionCandidate, ...]
+    matched_by: tuple[str, ...]
+    confidence: int
+
+    @property
+    def agent_id(self) -> str:
+        return self.definition.agent_id
+
+    @property
+    def display_name(self) -> str:
+        return self.definition.display_name
+
+    @property
+    def processes(self) -> tuple[ProcessInfo, ...]:
+        return tuple(process for session in self.sessions for process in session.processes)
+
+    @property
+    def pids(self) -> tuple[int, ...]:
+        return tuple(sorted({process.pid for process in self.processes}))
+
+    @property
+    def session_count(self) -> int:
+        return len(self.sessions)
+
 
 @dataclass(frozen=True)
 class StatusEvent:
     agent_id: str
     status: AgentStatus
     message: str
+    session_id: str | None = None
+    session_label: str | None = None
     milestone: bool = False
     timestamp: float = field(default_factory=time)

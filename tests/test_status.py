@@ -5,7 +5,12 @@ from pathlib import Path
 
 from agent_light.definitions import get_definition
 from agent_light.models import AgentStatus, ProcessInfo
-from agent_light.status import HeuristicStatusProvider, JsonStatusFileProvider
+from agent_light.status import HeuristicStatusProvider, JsonStatusFileProvider, PollingStatusListener
+
+
+class FakeProcessSource:
+    def snapshot(self):
+        return []
 
 
 class StatusTests(unittest.TestCase):
@@ -52,6 +57,28 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(event.status, AgentStatus.NEEDS_INTERACTION)
         self.assertEqual(event.message, "等待授权")
         self.assertTrue(event.milestone)
+
+    def test_listener_filters_to_selected_session_tree(self):
+        definition = get_definition("codex_cli")
+        listener = PollingStatusListener(
+            definition=definition,
+            process_source=FakeProcessSource(),
+            status_provider=HeuristicStatusProvider(),
+            callback=lambda event: None,
+            session_root_pid=10,
+        )
+        processes = [
+            ProcessInfo(pid=10, name="node", cmdline=("codex",)),
+            ProcessInfo(pid=11, name="node", ppid=10, cmdline=("codex child",)),
+            ProcessInfo(pid=20, name="node", cmdline=("codex other",)),
+        ]
+
+        filtered = listener._filter_session_processes(
+            processes,
+            {process.pid: process for process in processes},
+        )
+
+        self.assertEqual([process.pid for process in filtered], [10, 11])
 
 
 if __name__ == "__main__":

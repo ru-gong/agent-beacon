@@ -25,7 +25,15 @@ class PsutilProcessSource:
         import psutil
 
         processes: list[ProcessInfo] = []
-        attrs = ["pid", "name", "cmdline", "status", "cpu_percent", "create_time"]
+        attrs = [
+            "pid",
+            "ppid",
+            "name",
+            "cmdline",
+            "status",
+            "cpu_percent",
+            "create_time",
+        ]
         try:
             iterator = psutil.process_iter(attrs=attrs, ad_value=None)
             for proc in iterator:
@@ -36,6 +44,11 @@ class PsutilProcessSource:
                         ProcessInfo(
                             pid=int(info["pid"]),
                             name=str(info.get("name") or ""),
+                            ppid=(
+                                int(info["ppid"])
+                                if info.get("ppid") is not None
+                                else None
+                            ),
                             cmdline=cmdline,
                             status=str(info.get("status") or "") or None,
                             cpu_percent=(
@@ -71,7 +84,7 @@ class SubprocessProcessSource:
     def _snapshot_posix(self) -> Sequence[ProcessInfo]:
         try:
             result = subprocess.run(
-                ["ps", "-axww", "-o", "pid=,command="],
+                ["ps", "-axww", "-o", "pid=,ppid=,command="],
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_seconds,
@@ -84,21 +97,22 @@ class SubprocessProcessSource:
             line = raw_line.strip()
             if not line:
                 continue
-            parts = line.split(None, 1)
-            if len(parts) < 2:
+            parts = line.split(None, 2)
+            if len(parts) < 3:
                 continue
             try:
                 pid = int(parts[0])
+                ppid = int(parts[1])
             except ValueError:
                 continue
-            command = parts[1]
+            command = parts[2]
             try:
                 command_parts = shlex.split(command)
             except ValueError:
                 command_parts = command.split()
             executable = command_parts[0] if command_parts else command
             name = Path(executable).name
-            processes.append(ProcessInfo(pid=pid, name=name, cmdline=(command,)))
+            processes.append(ProcessInfo(pid=pid, name=name, ppid=ppid, cmdline=(command,)))
         return processes
 
     def _snapshot_windows(self) -> Sequence[ProcessInfo]:
@@ -107,7 +121,7 @@ class SubprocessProcessSource:
             return []
         script = (
             "Get-CimInstance Win32_Process | "
-            "Select-Object ProcessId,Name,CommandLine | "
+            "Select-Object ProcessId,ParentProcessId,Name,CommandLine | "
             "ConvertTo-Csv -NoTypeInformation"
         )
         try:
@@ -127,10 +141,15 @@ class SubprocessProcessSource:
                 pid = int(row.get("ProcessId") or "")
             except ValueError:
                 continue
+            try:
+                ppid = int(row.get("ParentProcessId") or "")
+            except ValueError:
+                ppid = None
             processes.append(
                 ProcessInfo(
                     pid=pid,
                     name=row.get("Name") or "",
+                    ppid=ppid,
                     cmdline=(row.get("CommandLine") or "",),
                 )
             )

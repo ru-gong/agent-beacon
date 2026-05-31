@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 from .definitions import AGENT_DEFINITIONS
-from .models import AgentCandidate, AgentDefinition, ProcessInfo
+from .models import AgentCandidate, AgentDefinition, AgentSessionCandidate, ProcessInfo
 from .process_source import ProcessSource
 
 
@@ -26,6 +26,8 @@ GENERIC_LAUNCHERS = frozenset(
         "zsh",
     }
 )
+
+APPLICATION_AGENT_IDS = frozenset({"codex_desktop"})
 
 
 @dataclass(frozen=True)
@@ -101,11 +103,15 @@ class AgentScanner:
 
     def scan(self) -> list[AgentCandidate]:
         processes = list(self.process_source.snapshot())
+        process_by_pid = {process.pid: process for process in processes}
         candidates: list[AgentCandidate] = []
 
         for definition in self.definitions:
             matches = self.matcher.matches_for_definition(definition, processes)
             if not matches:
+                continue
+            sessions = self._build_sessions(definition, matches, process_by_pid)
+            if not sessions:
                 continue
             confidence = min(100, sum(match.score for match in matches[:3]))
             matched_by = tuple(
@@ -114,7 +120,7 @@ class AgentScanner:
             candidates.append(
                 AgentCandidate(
                     definition=definition,
-                    processes=tuple(match.process for match in matches),
+                    sessions=tuple(sessions),
                     matched_by=matched_by,
                     confidence=confidence,
                 )
@@ -122,3 +128,108 @@ class AgentScanner:
 
         candidates.sort(key=lambda candidate: candidate.confidence, reverse=True)
         return candidates
+
+    def _build_sessions(
+        self,
+        definition: AgentDefinition,
+        matches: Sequence[ProcessMatch],
+        process_by_pid: dict[int, ProcessInfo],
+    ) -> list[AgentSessionCandidate]:
+        matched_pids = {match.process.pid for match in matches}
+        if definition.agent_id in APPLICATION_AGENT_IDS:
+            return [self._single_application_session(definition, matches)]
+
+        groups: dict[int, list[ProcessMatch]] = {}
+
+        for match in matches:
+            root_pid = self._session_root_pid(
+                match.process.pid,
+                matched_pids=matched_pids,
+                process_by_pid=process_by_pid,
+            )
+            groups.setdefault(root_pid, []).append(match)
+
+        sessions: list[AgentSessionCandidate] = []
+        for root_pid, group_matches in groups.items():
+            group_matches.sort(
+                key=lambda match: (
+                    match.process.pid != root_pid,
+                    -(match.process.create_time or 0),
+                    match.process.pid,
+                )
+            )
+            confidence = min(100, sum(match.score for match in group_matches[:3]))
+            matched_by = tuple(
+                sorted({reason for match in group_matches for reason in match.reasons})
+            )
+            sessions.append(
+                AgentSessionCandidate(
+                    session_id=f"{definition.agent_id}:{root_pid}",
+                    definition=definition,
+                    root_pid=root_pid,
+                    processes=tuple(match.process for match in group_matches),
+                    matched_by=matched_by,
+                    confidence=confidence,
+                )
+            )
+
+        sessions.sort(
+            key=lambda session: (
+                -(session.root_process.create_time or 0),
+                session.root_pid,
+            )
+        )
+        return sessions
+
+    def _single_application_session(
+        self,
+        definition: AgentDefinition,
+        matches: Sequence[ProcessMatch],
+    ) -> AgentSessionCandidate:
+        root_match = max(
+            matches,
+            key=lambda match: (
+                match.score,
+                match.process.name.casefold()
+                in {keyword.casefold() for keyword in definition.process_name_keywords},
+                -(match.process.create_time or 0),
+            ),
+        )
+        sorted_matches = sorted(
+            matches,
+            key=lambda match: (
+                match.process.pid != root_match.process.pid,
+                -(match.process.create_time or 0),
+                match.process.pid,
+            ),
+        )
+        return AgentSessionCandidate(
+            session_id=f"{definition.agent_id}:{root_match.process.pid}",
+            definition=definition,
+            root_pid=root_match.process.pid,
+            processes=tuple(match.process for match in sorted_matches),
+            matched_by=tuple(
+                sorted({reason for match in matches for reason in match.reasons})
+            ),
+            confidence=min(100, sum(match.score for match in matches[:3])),
+        )
+
+    def _session_root_pid(
+        self,
+        pid: int,
+        matched_pids: set[int],
+        process_by_pid: dict[int, ProcessInfo],
+    ) -> int:
+        root_pid = pid
+        seen: set[int] = set()
+
+        while root_pid not in seen:
+            seen.add(root_pid)
+            process = process_by_pid.get(root_pid)
+            if process is None or process.ppid is None:
+                break
+            if process.ppid not in matched_pids:
+                break
+            root_pid = process.ppid
+
+        return root_pid

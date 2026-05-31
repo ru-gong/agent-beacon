@@ -27,7 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--agent",
         choices=known_agent_ids(),
-        help="Agent id to connect in headless mode.",
+        help="Agent id to connect in headless mode. Requires --session if multiple sessions are running.",
+    )
+    parser.add_argument(
+        "--session",
+        help="Session id to connect in headless mode, such as codex_cli:12345.",
     )
     parser.add_argument(
         "--poll-interval",
@@ -52,9 +56,19 @@ def main(argv: list[str] | None = None) -> int:
                         {
                             "agent_id": candidate.agent_id,
                             "display_name": candidate.display_name,
-                            "pids": candidate.pids,
                             "confidence": candidate.confidence,
                             "matched_by": candidate.matched_by,
+                            "sessions": [
+                                {
+                                    "session_id": session.session_id,
+                                    "root_pid": session.root_pid,
+                                    "label": session.menu_label,
+                                    "pids": session.pids,
+                                    "confidence": session.confidence,
+                                    "matched_by": session.matched_by,
+                                }
+                                for session in candidate.sessions
+                            ],
                         }
                         for candidate in candidates
                     ],
@@ -66,39 +80,63 @@ def main(argv: list[str] | None = None) -> int:
             if not candidates:
                 print("未检测到活跃 Agent")
             for candidate in candidates:
-                pids = ", ".join(str(pid) for pid in candidate.pids)
                 reasons = "; ".join(candidate.matched_by)
                 print(
                     f"{candidate.display_name} ({candidate.agent_id}) "
-                    f"confidence={candidate.confidence} pids=[{pids}] {reasons}"
+                    f"confidence={candidate.confidence} sessions={candidate.session_count} {reasons}"
                 )
+                for session in candidate.sessions:
+                    pids = ", ".join(str(pid) for pid in session.pids)
+                    print(
+                        f"  - {session.session_id} root={session.root_pid} "
+                        f"pids=[{pids}] {session.menu_label}"
+                    )
         return 0
 
     if args.headless:
-        return _run_headless(controller, selected_agent_id=args.agent)
+        return _run_headless(
+            controller,
+            selected_agent_id=args.agent,
+            selected_session_id=args.session,
+        )
 
     TrayApp(controller).run()
     return 0
 
 
 def _run_headless(
-    controller: AgentController, selected_agent_id: str | None = None
+    controller: AgentController,
+    selected_agent_id: str | None = None,
+    selected_session_id: str | None = None,
 ) -> int:
     candidates = controller.rescan()
-    agent_id = selected_agent_id
-    if agent_id is None and len(candidates) == 1:
-        agent_id = candidates[0].agent_id
-    if agent_id is None:
-        print("请选择要监听的 Agent：", file=sys.stderr)
-        for candidate in candidates:
-            print(f"  {candidate.agent_id}: {candidate.display_name}", file=sys.stderr)
+    sessions = [
+        session
+        for candidate in candidates
+        if selected_agent_id is None or candidate.agent_id == selected_agent_id
+        for session in candidate.sessions
+    ]
+    if selected_session_id is not None:
+        sessions = [
+            session for session in sessions if session.session_id == selected_session_id
+        ]
+    if len(sessions) != 1:
+        print("请选择要监听的 Session：", file=sys.stderr)
+        for session in sessions:
+            print(
+                f"  {session.session_id}: {session.display_name} · {session.menu_label}",
+                file=sys.stderr,
+            )
         return 2
+    session = sessions[0]
 
     def on_status(event: StatusEvent) -> None:
         print(
             json.dumps(
                 {
                     "agent_id": event.agent_id,
+                    "session_id": event.session_id,
+                    "session_label": event.session_label,
                     "status": event.status.value,
                     "message": event.message,
                     "milestone": event.milestone,
@@ -110,7 +148,7 @@ def _run_headless(
         )
 
     controller.subscribe(on_status)
-    controller.connect(agent_id)
+    controller.connect_session(session)
     try:
         while True:
             time.sleep(3600)
