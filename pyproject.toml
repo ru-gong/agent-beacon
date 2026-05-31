@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-traffic-light"
+version = "0.1.0"
+description = "Cross-platform tray traffic-light status indicator for local AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "psutil>=5.9",
+  "pystray>=0.19.5",
+  "Pillow>=10.0",
+]
+
+[project.scripts]
+agent-light = "agent_light.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_light*"]
