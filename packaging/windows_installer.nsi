@@ -8,11 +8,11 @@
 !define APP_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Agent Beacon"
 
 Name "${APP_NAME}"
-OutFile "release\windows\Agent-Beacon-${APP_VERSION}-Windows-Setup.exe"
+OutFile "..\release\windows\Agent-Beacon-${APP_VERSION}-Windows-Setup.exe"
 InstallDir "$LOCALAPPDATA\Agent Beacon"
 RequestExecutionLevel user
-Icon "assets\agent-beacon.ico"
-UninstallIcon "assets\agent-beacon.ico"
+Icon "..\assets\agent-beacon.ico"
+UninstallIcon "..\assets\agent-beacon.ico"
 
 Page directory
 Page instfiles
@@ -21,7 +21,7 @@ UninstPage instfiles
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /oname="${APP_EXE}" "dist\Agent Beacon.exe"
+  File /oname="${APP_EXE}" "..\dist\Agent Beacon.exe"
 
   CreateDirectory "$SMPROGRAMS\Agent Beacon"
   CreateShortcut "$SMPROGRAMS\Agent Beacon\Agent Beacon.lnk" "$INSTDIR\${APP_EXE}"
